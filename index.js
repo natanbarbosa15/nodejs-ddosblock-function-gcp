@@ -3,7 +3,13 @@ const { google } = require("googleapis");
 const appengine = google.appengine("v1");
 const compute = google.compute("v1");
 
-// Function to create a Firewall Rule if not exists
+/**
+ * Function to create Firewall rule
+ * @method function
+ * @param {String} ip String with IP to be blocked
+ * @param {String} project String with Google Cloud project ID
+ * @param {Object} authClient Object with Google Authentication
+ */
 async function createFirewallRule(ip, project, authClient) {
   // Create a new rule with default parameters
   const newRule = {
@@ -39,7 +45,14 @@ async function createFirewallRule(ip, project, authClient) {
   await compute.firewalls.insert(request);
 }
 
-// Function to update a Firewall Rule if exists
+/**
+ * Function to update Firewall rule
+ * @method function
+ * @param {String} ip String with IP to be blocked
+ * @param {String} project String with Google Cloud project ID
+ * @param {Object} authClient Object with Google Authentication
+ * @param {String} rule String with name of rule to update
+ */
 async function updateFirewallRule(ip, project, authClient, rule) {
   const blockIp = ip + "/32";
 
@@ -69,7 +82,53 @@ async function updateFirewallRule(ip, project, authClient, rule) {
   }
 }
 
-exports.DdosBlock = async (req, res) => {
+/**
+ * Function to create Firewall rule on App Engine
+ * @method function
+ * @param {String} ip String with IP to be blocked
+ * @param {String} project String with Google Cloud project ID
+ * @param {Object} authClient Object with Google Authentication
+ */
+async function createAppEngineFirewallRule(ip, project, authClient) {
+  // Check existing rules and get next available priority
+  const list = await appengine.apps.firewall.ingressRules.list({
+    appsId: project,
+    auth: authClient,
+  });
+  const rules = list.data.ingressRules;
+  let nextPriority = 0;
+  if (rules.length > 1) {
+    nextPriority = rules[rules.length - 2].priority + 1;
+  } else {
+    nextPriority = 1;
+  }
+
+  // Check if client IP is not IPv6, with string start equals to "::ffff:"
+  // and remove null IPv6
+  if (ip.startsWith("::ffff:")) {
+    ip = ip.replace("::ffff:", "") + "/32";
+  }
+
+  // Create Firewall Rule to Block given IP
+  await appengine.apps.firewall.ingressRules.create({
+    appsId: project,
+    requestBody: {
+      priority: nextPriority,
+      action: "DENY",
+      sourceRange: ip,
+      description: "DDoS Block",
+    },
+    auth: authClient,
+  });
+}
+
+/**
+ * Main Function
+ * @method function
+ * @param {Object} req Request object
+ * @param {Object} res Response object
+ */
+exports.ddosblock = async (req, res) => {
   // This method looks for the GCLOUD_PROJECT and GOOGLE_APPLICATION_CREDENTIALS
   const auth = new google.auth.GoogleAuth({
     // Scopes can be specified either as an array or as a single, space-delimited string.
@@ -101,33 +160,46 @@ exports.DdosBlock = async (req, res) => {
   // Retry async block if generate any errors
   await retry(
     async (procedure) => {
-      // Fetch current Firewall rules
-      result = await compute.firewalls.list(request);
-      // Get only Firewall rules from result
-      const rules = result.data.items;
-      // Var for update rule
-      let updateRule = null;
+      // If Compute Engine Firewall type
+      if (req.body.type === "compute") {
+        // Fetch current Firewall rules
+        result = await compute.firewalls.list(request);
+        // Get only Firewall rules from result
+        const rules = result.data.items;
+        // Var for update rule
+        let updateRule = null;
 
-      // Loop through rules and check if already exists "ddosblock" rule
-      for (const rule of rules) {
-        if (rule.name === "ddosblock") {
-          updateRule = rule;
-          break;
+        // Loop through rules and check if already exists "ddosblock" rule
+        for (const rule of rules) {
+          if (rule.name === "ddosblock") {
+            updateRule = rule;
+            break;
+          }
+        }
+
+        // If rule not exists call function to create rule
+        if (updateRule === null) {
+          await createFirewallRule(req.body.ip, project, authClient).catch(
+            console.error
+          );
+        }
+        // Else call function to update rule
+        else {
+          await updateFirewallRule(
+            req.body.ip,
+            project,
+            authClient,
+            updateRule
+          ).catch(console.error);
         }
       }
-
-      // If rule not exists call function to create rule
-      if (updateRule === null) {
-        await createFirewallRule(req.body.ip, project, authClient).catch();
-      }
-      // Else call function to update rule
-      else {
-        await updateFirewallRule(
+      // Else if is App Engine Firewall type
+      else if (req.body.type === "appengine") {
+        await createAppEngineFirewallRule(
           req.body.ip,
           project,
-          authClient,
-          updateRule
-        ).catch();
+          authClient
+        ).catch(console.error);
       }
     },
     {
