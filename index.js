@@ -171,50 +171,58 @@ async function createAppEngineFirewallRule(ip, project, authClient) {
  * @param {Object} res Response object
  */
 exports.ddosblock = async (req, res) => {
-  // This method looks for the GCLOUD_PROJECT and GOOGLE_APPLICATION_CREDENTIALS
-  const auth = new google.auth.GoogleAuth({
-    // Scopes can be specified either as an array or as a single, space-delimited string.
-    scopes: [
-      "https://www.googleapis.com/auth/appengine.admin",
-      "https://www.googleapis.com/auth/cloud-platform",
-      "https://www.googleapis.com/auth/cloud-platform.read-only",
-      "https://www.googleapis.com/auth/compute",
-      "https://www.googleapis.com/auth/compute.readonly",
-      "https://www.googleapis.com/auth/devstorage.full_control",
-      "https://www.googleapis.com/auth/devstorage.read_only",
-      "https://www.googleapis.com/auth/devstorage.read_write",
-    ],
-  });
+  if (
+    typeof req.body.type !== "undefined" &&
+    typeof req.body.ip !== "undefined" &&
+    typeof req.body.action !== "undefined"
+  ) {
+    // This method looks for the GCLOUD_PROJECT and GOOGLE_APPLICATION_CREDENTIALS
+    const auth = new google.auth.GoogleAuth({
+      // Scopes can be specified either as an array or as a single, space-delimited string.
+      scopes: [
+        "https://www.googleapis.com/auth/appengine.admin",
+        "https://www.googleapis.com/auth/cloud-platform",
+        "https://www.googleapis.com/auth/cloud-platform.read-only",
+        "https://www.googleapis.com/auth/compute",
+        "https://www.googleapis.com/auth/compute.readonly",
+        "https://www.googleapis.com/auth/devstorage.full_control",
+        "https://www.googleapis.com/auth/devstorage.read_only",
+        "https://www.googleapis.com/auth/devstorage.read_write",
+      ],
+    });
 
-  // Obtain Client Authentication
-  const authClient = await auth.getClient();
-  // Obtain the current Project ID
-  const project = await auth.getProjectId();
+    // Obtain Client Authentication
+    const authClient = await auth.getClient();
+    // Obtain the current Project ID
+    const project = await auth.getProjectId();
 
-  // Retry async block if generate any errors
-  await retry(
-    async (procedure) => {
-      // If Compute Engine Firewall type
-      if (req.body.type === "compute") {
-        await computeEngineFirewall(req.body.ip, project, authClient);
+    // Retry async block if generate any errors
+    await retry(
+      async (procedure) => {
+        // If Compute Engine Firewall type
+        if (req.body.type === "compute") {
+          await computeEngineFirewall(req.body.ip, project, authClient);
+        }
+        // Else if is App Engine Firewall type
+        else if (req.body.type === "appengine") {
+          await createAppEngineFirewallRule(
+            req.body.ip,
+            project,
+            authClient
+          ).catch(console.error);
+        }
+      },
+      {
+        // Max number of retries
+        retries: 5,
+        // Min timeout for every retry = 2000 ms => 2 s
+        minTimeout: 2000,
+        // Max timeout for every retry = 10000 ms => 10 s
+        maxTimeout: 10000,
       }
-      // Else if is App Engine Firewall type
-      else if (req.body.type === "appengine") {
-        await createAppEngineFirewallRule(
-          req.body.ip,
-          project,
-          authClient
-        ).catch(console.error);
-      }
-    },
-    {
-      // Max number of retries
-      retries: 5,
-      // Min timeout for every retry = 2000 ms => 2 s
-      minTimeout: 2000,
-      // Max timeout for every retry = 10000 ms => 10 s
-      maxTimeout: 10000,
-    }
-  );
-  res.status(200).send("Blocked IP = " + req.body.ip);
+    );
+    res.status(200).send("Blocked IP = " + req.body.ip);
+  } else {
+    res.status(400).send("Bad request");
+  }
 };
