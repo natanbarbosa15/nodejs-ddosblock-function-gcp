@@ -83,6 +83,48 @@ async function updateFirewallRule(ip, project, authClient, rule) {
 }
 
 /**
+ * Function to get Compute Engine Firewall rules
+ * @method function
+ * @param {String} ip String with IP to be blocked
+ * @param {String} project String with Google Cloud project ID
+ * @param {Object} authClient Object with Google Authentication
+ */
+async function computeEngineFirewall(ip, project, authClient) {
+  // Create a request template with required parameters
+  const request = {
+    // Project ID for this request.
+    project: project,
+    // Authentication Token
+    auth: authClient,
+  };
+  // Fetch current Firewall rules
+  const result = await compute.firewalls.list(request);
+  // Get only Firewall rules from result
+  const rules = result.data.items;
+  // Var for update rule
+  let updateRule = null;
+
+  // Loop through rules and check if already exists "ddosblock" rule
+  for (const rule of rules) {
+    if (rule.name === "ddosblock") {
+      updateRule = rule;
+      break;
+    }
+  }
+
+  // If rule not exists call function to create rule
+  if (updateRule === null) {
+    await createFirewallRule(ip, project, authClient).catch(console.error);
+  }
+  // Else call function to update rule
+  else {
+    await updateFirewallRule(ip, project, authClient, updateRule).catch(
+      console.error
+    );
+  }
+}
+
+/**
  * Function to create Firewall rule on App Engine
  * @method function
  * @param {String} ip String with IP to be blocked
@@ -149,49 +191,12 @@ exports.ddosblock = async (req, res) => {
   // Obtain the current Project ID
   const project = await auth.getProjectId();
 
-  // Create a request template with required parameters
-  const request = {
-    // Project ID for this request.
-    project: project,
-    // Authentication Token
-    auth: authClient,
-  };
-
   // Retry async block if generate any errors
   await retry(
     async (procedure) => {
       // If Compute Engine Firewall type
       if (req.body.type === "compute") {
-        // Fetch current Firewall rules
-        result = await compute.firewalls.list(request);
-        // Get only Firewall rules from result
-        const rules = result.data.items;
-        // Var for update rule
-        let updateRule = null;
-
-        // Loop through rules and check if already exists "ddosblock" rule
-        for (const rule of rules) {
-          if (rule.name === "ddosblock") {
-            updateRule = rule;
-            break;
-          }
-        }
-
-        // If rule not exists call function to create rule
-        if (updateRule === null) {
-          await createFirewallRule(req.body.ip, project, authClient).catch(
-            console.error
-          );
-        }
-        // Else call function to update rule
-        else {
-          await updateFirewallRule(
-            req.body.ip,
-            project,
-            authClient,
-            updateRule
-          ).catch(console.error);
-        }
+        await computeEngineFirewall(req.body.ip, project, authClient);
       }
       // Else if is App Engine Firewall type
       else if (req.body.type === "appengine") {
